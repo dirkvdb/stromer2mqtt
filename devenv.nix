@@ -19,4 +19,8 @@
     lld
     cargo-nextest
   ];
+
+  tasks."stromer2mqtt:test" = {
+    exec = "cargo test --all-features";
+  };
 }

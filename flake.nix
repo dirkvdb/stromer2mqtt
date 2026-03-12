@@ -33,8 +33,6 @@
             version = cargoToml.package.version;
 
             src = ./.;
-
-            # assuming you have a Cargo.lock
             cargoLock.lockFile = ./Cargo.lock;
           };
         }
@@ -56,7 +54,6 @@
         )
         // {
           # Add dockerImage to packages
-
           dockerImage =
             let
               # Select the appropriate package (static for Linux, default otherwise)
