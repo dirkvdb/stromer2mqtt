@@ -22,6 +22,7 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
+        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
       in
       {
 
@@ -29,7 +30,7 @@
           # regular, host-native build (dynamic)
           default = pkgs.rustPlatform.buildRustPackage {
             pname = "stromer2mqtt";
-            version = "1.0.0";
+            version = cargoToml.package.version;
 
             src = ./.;
 
@@ -43,7 +44,7 @@
             {
               static = pkgs.pkgsStatic.rustPlatform.buildRustPackage {
                 pname = "stromer2mqtt";
-                version = "1.0.0";
+                version = cargoToml.package.version;
 
                 src = ./.;
 
