@@ -53,7 +53,6 @@
             { }
         )
         // {
-          # Add dockerImage to packages
           dockerImage =
             let
               # Select the appropriate package (static for Linux, default otherwise)
@@ -67,6 +66,7 @@
                 name = "stromer2mqtt-fhs";
                 paths = [
                   stromer2mqttApp
+                  pkgs.cacert
                 ];
                 postBuild = ''
                   mkdir -p $out/app/bin
@@ -87,7 +87,7 @@
               copyToRoot = app;
 
               config = {
-                Cmd = [ "/app/bin/stromer2mqtt" ]; # The command to run when the container starts
+                Cmd = [ "/app/bin/stromer2mqtt" ];
               };
             };
         };
