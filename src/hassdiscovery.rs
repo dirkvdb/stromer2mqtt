@@ -2,6 +2,7 @@ use crate::Result;
 use crate::bike::StromerBike;
 use crate::mqtt::MqttData;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 const HASS_DISCOVERY_TOPIC: &str = "homeassistant";
 
@@ -31,16 +32,31 @@ struct Device {
 }
 
 #[derive(Serialize)]
-struct Sensor {
-    origin: Origin,
+struct DeviceDiscovery {
     device: Device,
+    origin: Origin,
+    #[serde(rename = "avty_t")]
+    availability_topic: String,
+    #[serde(rename = "cmps")]
+    components: BTreeMap<String, Component>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "p", rename_all = "snake_case")]
+enum Component {
+    Sensor(Sensor),
+    BinarySensor(BinarySensor),
+    Switch(Switch),
+    DeviceTracker(DeviceTracker),
+}
+
+#[derive(Serialize)]
+struct Sensor {
     name: String,
     obj_id: String,
     unique_id: String,
     #[serde(rename = "stat_t")]
     state_topic: String,
-    #[serde(rename = "avty_t")]
-    availability_topic: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     state_class: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,15 +71,11 @@ struct Sensor {
 
 #[derive(Serialize)]
 struct BinarySensor {
-    origin: Origin,
-    device: Device,
     name: String,
     obj_id: String,
     unique_id: String,
     #[serde(rename = "stat_t")]
     state_topic: String,
-    #[serde(rename = "avty_t")]
-    availability_topic: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     device_class: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -74,15 +86,11 @@ struct BinarySensor {
 
 #[derive(Serialize)]
 struct Switch {
-    origin: Origin,
-    device: Device,
     name: String,
     obj_id: String,
     unique_id: String,
     #[serde(rename = "stat_t")]
     state_topic: String,
-    #[serde(rename = "avty_t")]
-    availability_topic: String,
     #[serde(rename = "cmd_t")]
     command_topic: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -95,15 +103,11 @@ struct Switch {
 
 #[derive(Serialize)]
 struct DeviceTracker {
-    origin: Origin,
-    device: Device,
     name: String,
     obj_id: String,
     unique_id: String,
     #[serde(rename = "json_attr_t")]
     json_attributes_topic: String,
-    #[serde(rename = "avty_t")]
-    availability_topic: String,
     source_type: String,
 }
 
@@ -403,26 +407,14 @@ const SWITCHES: &[SwitchDef] = &[
     },
 ];
 
-fn create_sensor_messages(bike: &StromerBike, base_topic: &str) -> Result<Vec<MqttData>> {
-    let mut messages = Vec::new();
-    let bike_id = bike.bike_id();
-    let device = make_device(bike);
-
+fn add_sensors(components: &mut BTreeMap<String, Component>, bike_id: &str, base_topic: &str) {
     for def in SENSORS {
         let unique_id = format!("stromer_{}_{}", bike_id, def.field);
         let sensor = Sensor {
-            origin: Origin::stromer2mqtt(),
-            device: Device {
-                name: device.name.clone(),
-                identifiers: device.identifiers.clone(),
-                model: device.model.clone(),
-                manufacturer: device.manufacturer.clone(),
-            },
             name: def.name.to_string(),
             obj_id: unique_id.clone(),
             unique_id: unique_id.clone(),
             state_topic: format!("{}stromer_{}/{}", base_topic, bike_id, def.field),
-            availability_topic: format!("{}state", base_topic),
             state_class: def.state_class.map(String::from),
             unit_of_measurement: def.unit.map(String::from),
             icon: def.icon.map(String::from),
@@ -430,73 +422,40 @@ fn create_sensor_messages(bike: &StromerBike, base_topic: &str) -> Result<Vec<Mq
             value_template: None,
         };
 
-        messages.push(MqttData {
-            topic: format!("{}/sensor/{}/config", HASS_DISCOVERY_TOPIC, unique_id),
-            payload: serde_json::to_string(&sensor)?,
-        });
+        components.insert(unique_id, Component::Sensor(sensor));
     }
-
-    Ok(messages)
 }
 
-fn create_binary_sensor_messages(bike: &StromerBike, base_topic: &str) -> Result<Vec<MqttData>> {
-    let mut messages = Vec::new();
-    let bike_id = bike.bike_id();
-    let device = make_device(bike);
-
+fn add_binary_sensors(
+    components: &mut BTreeMap<String, Component>,
+    bike_id: &str,
+    base_topic: &str,
+) {
     for def in BINARY_SENSORS {
         let unique_id = format!("stromer_{}_{}", bike_id, def.field);
         let binary_sensor = BinarySensor {
-            origin: Origin::stromer2mqtt(),
-            device: Device {
-                name: device.name.clone(),
-                identifiers: device.identifiers.clone(),
-                model: device.model.clone(),
-                manufacturer: device.manufacturer.clone(),
-            },
             name: def.name.to_string(),
             obj_id: unique_id.clone(),
             unique_id: unique_id.clone(),
             state_topic: format!("{}stromer_{}/{}", base_topic, bike_id, def.field),
-            availability_topic: format!("{}state", base_topic),
             device_class: None,
             icon: Some(def.icon_on.to_string()),
             payload_on: "true".to_string(),
             payload_off: "false".to_string(),
         };
 
-        messages.push(MqttData {
-            topic: format!(
-                "{}/binary_sensor/{}/config",
-                HASS_DISCOVERY_TOPIC, unique_id
-            ),
-            payload: serde_json::to_string(&binary_sensor)?,
-        });
+        components.insert(unique_id, Component::BinarySensor(binary_sensor));
     }
-
-    Ok(messages)
 }
 
-fn create_switch_messages(bike: &StromerBike, base_topic: &str) -> Result<Vec<MqttData>> {
-    let mut messages = Vec::new();
-    let bike_id = bike.bike_id();
-    let device = make_device(bike);
-
+fn add_switches(components: &mut BTreeMap<String, Component>, bike_id: &str, base_topic: &str) {
     for def in SWITCHES {
         let unique_id = format!("stromer_{}_{}_sw", bike_id, def.field);
         let switch = Switch {
-            origin: Origin::stromer2mqtt(),
-            device: Device {
-                name: device.name.clone(),
-                identifiers: device.identifiers.clone(),
-                model: device.model.clone(),
-                manufacturer: device.manufacturer.clone(),
-            },
             name: def.name.to_string(),
             obj_id: unique_id.clone(),
             unique_id: unique_id.clone(),
             state_topic: format!("{}stromer_{}/{}", base_topic, bike_id, def.field),
-            availability_topic: format!("{}state", base_topic),
             command_topic: format!(
                 "{}stromer_{}/cmnd/{}",
                 base_topic, bike_id, def.command_action
@@ -508,51 +467,70 @@ fn create_switch_messages(bike: &StromerBike, base_topic: &str) -> Result<Vec<Mq
             state_off: "false".to_string(),
         };
 
-        messages.push(MqttData {
-            topic: format!("{}/switch/{}/config", HASS_DISCOVERY_TOPIC, unique_id),
-            payload: serde_json::to_string(&switch)?,
-        });
+        components.insert(unique_id, Component::Switch(switch));
     }
-
-    Ok(messages)
 }
 
-fn create_device_tracker_message(bike: &StromerBike, base_topic: &str) -> Result<MqttData> {
-    let bike_id = bike.bike_id();
+fn add_device_tracker(
+    components: &mut BTreeMap<String, Component>,
+    bike_id: &str,
+    base_topic: &str,
+) {
     let unique_id = format!("stromer_{}_location", bike_id);
-    let device = make_device(bike);
-
     let tracker = DeviceTracker {
-        origin: Origin::stromer2mqtt(),
-        device,
         name: "Location".to_string(),
         obj_id: unique_id.clone(),
         unique_id: unique_id.clone(),
         json_attributes_topic: format!("{}stromer_{}/position", base_topic, bike_id),
-        availability_topic: format!("{}state", base_topic),
         source_type: "gps".to_string(),
     };
 
-    Ok(MqttData {
-        topic: format!(
-            "{}/device_tracker/{}/config",
-            HASS_DISCOVERY_TOPIC, unique_id
-        ),
-        payload: serde_json::to_string(&tracker)?,
-    })
+    components.insert(unique_id, Component::DeviceTracker(tracker));
 }
 
-/// Generate all Home Assistant MQTT discovery payloads for the given bike.
-///
-/// Returns a Vec of MqttData entries, each containing a discovery topic
-/// and JSON payload for sensors, binary sensors, switches, and device tracker.
+/// Generate device discovery and ordered migration/cleanup messages for legacy topics.
 pub fn create_discovery_messages(bike: &StromerBike, base_topic: &str) -> Result<Vec<MqttData>> {
-    let mut messages = Vec::new();
+    let mut components = BTreeMap::new();
+    let bike_id = bike.bike_id();
+    add_sensors(&mut components, bike_id, base_topic);
+    add_binary_sensors(&mut components, bike_id, base_topic);
+    add_switches(&mut components, bike_id, base_topic);
+    add_device_tracker(&mut components, bike_id, base_topic);
 
-    messages.extend(create_sensor_messages(bike, base_topic)?);
-    messages.extend(create_binary_sensor_messages(bike, base_topic)?);
-    messages.extend(create_switch_messages(bike, base_topic)?);
-    messages.push(create_device_tracker_message(bike, base_topic)?);
+    let legacy_topics: Vec<String> = components
+        .iter()
+        .map(|(unique_id, component)| {
+            let platform = match component {
+                Component::Sensor(_) => "sensor",
+                Component::BinarySensor(_) => "binary_sensor",
+                Component::Switch(_) => "switch",
+                Component::DeviceTracker(_) => "device_tracker",
+            };
+            format!("{}/{}/{}/config", HASS_DISCOVERY_TOPIC, platform, unique_id)
+        })
+        .collect();
+
+    let discovery = DeviceDiscovery {
+        device: make_device(bike),
+        origin: Origin::stromer2mqtt(),
+        availability_topic: format!("{}state", base_topic),
+        components,
+    };
+
+    // Unload legacy discovery without deleting entity registry settings, then
+    // publish the device configuration before clearing the old retained topics.
+    let mut messages: Vec<MqttData> = legacy_topics
+        .iter()
+        .map(|topic| MqttData::new(topic.as_str(), r#"{"migrate_discovery":true}"#))
+        .collect();
+    messages.push(MqttData {
+        topic: format!("{}/device/stromer_{}/config", HASS_DISCOVERY_TOPIC, bike_id),
+        payload: serde_json::to_string(&discovery)?,
+    });
+    messages.extend(legacy_topics.into_iter().map(|topic| MqttData {
+        topic,
+        payload: String::new(),
+    }));
 
     Ok(messages)
 }
@@ -565,54 +543,72 @@ mod tests {
         StromerBike::new("12345".into(), "MyBike".into(), "ST5".into(), None)
     }
 
+    fn device_payload(base_topic: &str) -> serde_json::Value {
+        let messages = create_discovery_messages(&make_test_bike(), base_topic)
+            .expect("Should generate messages");
+        let device = messages
+            .iter()
+            .find(|m| m.topic == "homeassistant/device/stromer_12345/config")
+            .expect("Should have a device discovery message");
+        serde_json::from_str(&device.payload).expect("Payload should be valid JSON")
+    }
+
     #[test]
-    fn test_discovery_message_count() {
-        let bike = make_test_bike();
-        let messages =
-            create_discovery_messages(&bike, "stromer/").expect("Should generate messages");
-
-        // 22 sensors + 3 binary sensors + 2 switches + 1 device tracker = 28
-        let sensor_count = messages
-            .iter()
-            .filter(|m| m.topic.contains("/sensor/") && !m.topic.contains("/binary_sensor/"))
-            .count();
-        let binary_sensor_count = messages
-            .iter()
-            .filter(|m| m.topic.contains("/binary_sensor/"))
-            .count();
-        let switch_count = messages
-            .iter()
-            .filter(|m| m.topic.contains("/switch/"))
-            .count();
-        let tracker_count = messages
-            .iter()
-            .filter(|m| m.topic.contains("/device_tracker/"))
-            .count();
-
+    fn test_device_discovery_components() {
+        let payload = device_payload("stromer/");
+        let components = payload["cmps"]
+            .as_object()
+            .expect("Components should be a map");
         assert_eq!(
-            sensor_count,
-            SENSORS.len(),
-            "Expected {} sensors",
-            SENSORS.len()
-        );
-        assert_eq!(
-            binary_sensor_count,
-            BINARY_SENSORS.len(),
-            "Expected {} binary sensors",
-            BINARY_SENSORS.len()
-        );
-        assert_eq!(
-            switch_count,
-            SWITCHES.len(),
-            "Expected {} switches",
-            SWITCHES.len()
-        );
-        assert_eq!(tracker_count, 1, "Expected 1 device tracker");
-
-        assert_eq!(
-            messages.len(),
+            components.len(),
             SENSORS.len() + BINARY_SENSORS.len() + SWITCHES.len() + 1
         );
+        for (platform, count) in [
+            ("sensor", SENSORS.len()),
+            ("binary_sensor", BINARY_SENSORS.len()),
+            ("switch", SWITCHES.len()),
+            ("device_tracker", 1),
+        ] {
+            assert_eq!(
+                components.values().filter(|c| c["p"] == platform).count(),
+                count
+            );
+        }
+        for (id, component) in components {
+            assert_eq!(component["unique_id"], id.as_str());
+            assert_eq!(component["obj_id"], id.as_str());
+            assert!(component.get("device").is_none());
+            assert!(component.get("origin").is_none());
+            assert!(component.get("avty_t").is_none());
+        }
+    }
+
+    #[test]
+    fn test_legacy_discovery_migration_order() {
+        let messages = create_discovery_messages(&make_test_bike(), "stromer/")
+            .expect("Should generate messages");
+        let count = SENSORS.len() + BINARY_SENSORS.len() + SWITCHES.len() + 1;
+        assert_eq!(messages.len(), count * 2 + 1);
+        assert_eq!(
+            messages[count].topic,
+            "homeassistant/device/stromer_12345/config"
+        );
+        let payload = device_payload("stromer/");
+        let components = payload["cmps"].as_object().unwrap();
+        for ((id, component), (migration, cleanup)) in components
+            .iter()
+            .zip(messages[..count].iter().zip(&messages[count + 1..]))
+        {
+            let topic = format!(
+                "homeassistant/{}/{}/config",
+                component["p"].as_str().unwrap(),
+                id
+            );
+            assert_eq!(migration.topic, topic);
+            assert_eq!(migration.payload, r#"{"migrate_discovery":true}"#);
+            assert_eq!(cleanup.topic, topic);
+            assert!(cleanup.payload.is_empty());
+        }
     }
 
     #[test]
@@ -637,42 +633,24 @@ mod tests {
 
     #[test]
     fn test_sensor_payload_contains_required_fields() {
-        let bike = make_test_bike();
-        let messages =
-            create_discovery_messages(&bike, "stromer/").expect("Should generate messages");
-
-        // Check the battery_soc sensor specifically
-        let battery_msg = messages
-            .iter()
-            .find(|m| m.topic.contains("stromer_12345_battery_soc/config"))
-            .expect("Should have battery_soc sensor");
-
-        let payload: serde_json::Value =
-            serde_json::from_str(&battery_msg.payload).expect("Payload should be valid JSON");
+        let discovery = device_payload("stromer/");
+        let payload = &discovery["cmps"]["stromer_12345_battery_soc"];
 
         assert_eq!(payload["name"], "Battery SOC");
         assert_eq!(payload["stat_t"], "stromer/stromer_12345/battery_soc");
-        assert_eq!(payload["avty_t"], "stromer/state");
+        assert_eq!(discovery["avty_t"], "stromer/state");
         assert_eq!(payload["unit_of_measurement"], "%");
         assert_eq!(payload["device_class"], "battery");
         assert_eq!(payload["state_class"], "measurement");
-        assert!(payload["origin"]["name"].as_str().is_some());
-        assert!(payload["origin"]["sw"].as_str().is_some());
+        assert_eq!(discovery["origin"]["name"], env!("CARGO_PKG_NAME"));
+        assert_eq!(discovery["origin"]["sw"], env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
     fn test_binary_sensor_payload() {
-        let bike = make_test_bike();
-        let messages =
-            create_discovery_messages(&bike, "stromer/").expect("Should generate messages");
-
-        let light_msg = messages
-            .iter()
-            .find(|m| m.topic.contains("/binary_sensor/") && m.topic.contains("light_on"))
-            .expect("Should have light_on binary sensor");
-
-        let payload: serde_json::Value =
-            serde_json::from_str(&light_msg.payload).expect("Payload should be valid JSON");
+        let discovery = device_payload("stromer/");
+        let payload = &discovery["cmps"]["stromer_12345_light_on"];
+        assert_eq!(payload["stat_t"], "stromer/stromer_12345/light_on");
 
         assert_eq!(payload["name"], "Light");
         assert_eq!(payload["payload_on"], "true");
@@ -682,17 +660,9 @@ mod tests {
 
     #[test]
     fn test_switch_payload() {
-        let bike = make_test_bike();
-        let messages =
-            create_discovery_messages(&bike, "stromer/").expect("Should generate messages");
-
-        let lock_sw = messages
-            .iter()
-            .find(|m| m.topic.contains("/switch/") && m.topic.contains("lock_flag"))
-            .expect("Should have lock_flag switch");
-
-        let payload: serde_json::Value =
-            serde_json::from_str(&lock_sw.payload).expect("Payload should be valid JSON");
+        let discovery = device_payload("stromer/");
+        let payload = &discovery["cmps"]["stromer_12345_lock_flag_sw"];
+        assert_eq!(payload["stat_t"], "stromer/stromer_12345/lock_flag");
 
         assert_eq!(payload["name"], "Lock");
         assert_eq!(payload["cmd_t"], "stromer/stromer_12345/cmnd/lock");
@@ -705,17 +675,8 @@ mod tests {
 
     #[test]
     fn test_device_tracker_payload() {
-        let bike = make_test_bike();
-        let messages =
-            create_discovery_messages(&bike, "stromer/").expect("Should generate messages");
-
-        let tracker_msg = messages
-            .iter()
-            .find(|m| m.topic.contains("/device_tracker/"))
-            .expect("Should have device tracker");
-
-        let payload: serde_json::Value =
-            serde_json::from_str(&tracker_msg.payload).expect("Payload should be valid JSON");
+        let discovery = device_payload("stromer/");
+        let payload = &discovery["cmps"]["stromer_12345_location"];
 
         assert_eq!(payload["name"], "Location");
         assert_eq!(payload["json_attr_t"], "stromer/stromer_12345/position");
@@ -723,24 +684,51 @@ mod tests {
     }
 
     #[test]
-    fn test_device_info_in_payloads() {
-        let bike = make_test_bike();
-        let messages =
-            create_discovery_messages(&bike, "stromer/").expect("Should generate messages");
+    fn test_shared_device_info() {
+        let payload = device_payload("stromer/");
+        assert_eq!(payload["device"]["name"], "Stromer MyBike");
+        assert_eq!(payload["device"]["manufacturer"], "Stromer");
+        assert_eq!(payload["device"]["model"], "ST5");
+        assert_eq!(
+            payload["device"]["identifiers"],
+            serde_json::json!(["stromer_12345"])
+        );
+    }
 
-        for msg in &messages {
-            let payload: serde_json::Value =
-                serde_json::from_str(&msg.payload).expect("Payload should be valid JSON");
+    #[test]
+    fn test_custom_base_topic() {
+        let payload = device_payload("home/bikes/");
+        assert_eq!(payload["avty_t"], "home/bikes/state");
+        assert_eq!(
+            payload["cmps"]["stromer_12345_battery_soc"]["stat_t"],
+            "home/bikes/stromer_12345/battery_soc"
+        );
+        assert_eq!(
+            payload["cmps"]["stromer_12345_lock_flag_sw"]["cmd_t"],
+            "home/bikes/stromer_12345/cmnd/lock"
+        );
+        assert_eq!(
+            payload["cmps"]["stromer_12345_location"]["json_attr_t"],
+            "home/bikes/stromer_12345/position"
+        );
+    }
 
-            assert_eq!(payload["device"]["manufacturer"], "Stromer");
-            assert_eq!(payload["device"]["model"], "ST5");
-            assert!(
-                payload["device"]["identifiers"]
-                    .as_array()
-                    .expect("identifiers should be array")
-                    .contains(&serde_json::json!("stromer_12345")),
-                "Device identifiers should contain stromer_12345"
-            );
+    #[test]
+    fn test_bikes_have_distinct_devices_and_entities() {
+        let other_bike = StromerBike::new("67890".into(), "OtherBike".into(), "ST3".into(), None);
+        let messages = create_discovery_messages(&other_bike, "stromer/").unwrap();
+        let device = messages
+            .iter()
+            .find(|m| m.topic == "homeassistant/device/stromer_67890/config")
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&device.payload).unwrap();
+        assert_eq!(
+            payload["device"]["identifiers"],
+            serde_json::json!(["stromer_67890"])
+        );
+        for (id, component) in payload["cmps"].as_object().unwrap() {
+            assert!(id.starts_with("stromer_67890_"));
+            assert_eq!(component["unique_id"], id.as_str());
         }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "stromer2mqtt"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 default-run = "stromer2mqtt"
 
@@ -10,8 +10,8 @@ path = "src/bin/stromer2mqtt.rs"
 
 [dependencies]
 anyhow = { version = "1.0", features = ["backtrace"] }
-bytes = "1.11"
-clap = { version = "4.5", features = ["derive", "env"] }
+bytes = "1.12"
+clap = { version = "4.6", features = ["derive", "env"] }
 clap-verbosity-flag = "3.0"
 env_logger = "0.11"
 log = "0.4"
@@ -28,7 +28,7 @@ rumqttc = "0.25"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
-tokio = { version = "1.50", features = [
+tokio = { version = "1.53", features = [
   "io-util",
   "macros",
   "net",

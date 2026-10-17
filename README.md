@@ -98,7 +98,9 @@ The service subscribes to `<base-topic>/stromer_<bike_id>/cmnd/<action>` and sup
 
 ### Home Assistant discovery
 
-Run with `--hass-discovery` (or `S2M_HASS_DISCOVERY=true`) to automatically publish MQTT discovery messages so that sensors, binary sensors, switches, and a device tracker appear in Home Assistant without any manual configuration.
+Run with `--hass-discovery` (or `S2M_HASS_DISCOVERY=true`) to automatically discover the bike in Home Assistant without any manual configuration. A single retained device-discovery payload is published to `homeassistant/device/stromer_<bike_id>/config`, grouping all sensors, binary sensors, switches, and the GPS device tracker under one **Stromer <bike name>** device.
+
+This requires a Home Assistant version that supports MQTT device discovery. Existing entity unique IDs and MQTT state/command topics are unchanged. On startup, the service sends migration messages to the legacy per-entity discovery topics, publishes the combined device configuration, then clears the old retained discovery messages. Keep Home Assistant connected to the MQTT broker during the first upgrade so it can process the migration and preserve existing entity settings.
 
 ### Docker
 
