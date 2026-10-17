@@ -1,7 +1,17 @@
 use crate::Result;
-use anyhow::anyhow;
+use anyhow::{Context, anyhow, ensure};
 use bytes::Bytes;
-use std::time::Duration;
+use std::{path::PathBuf, sync::Arc, time::Duration};
+
+use rumqttc::{
+    Transport,
+    tokio_rustls::rustls::{
+        self, ClientConfig, DigitallySignedStruct, SignatureScheme,
+        client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+        crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature},
+        pki_types::{CertificateDer, ServerName, UnixTime},
+    },
+};
 
 use rumqttc::v5::{
     AsyncClient, Event, EventLoop, MqttOptions,
@@ -15,10 +25,90 @@ use rumqttc::v5::{
 pub struct MqttConfig {
     pub server: String,
     pub port: u16,
+    pub ca_cert: Option<PathBuf>,
+    pub insecure: bool,
     pub client_id: String,
     pub user: String,
     pub password: String,
     pub base_topic: String,
+}
+
+impl MqttConfig {
+    fn transport(&self) -> Result<Transport> {
+        ensure!(
+            self.ca_cert.is_none() || !self.insecure,
+            "MQTT CA certificate and insecure TLS options are mutually exclusive"
+        );
+
+        if let Some(path) = &self.ca_cert {
+            let ca = std::fs::read(path).with_context(|| {
+                format!("Failed to read MQTT CA certificate {}", path.display())
+            })?;
+            Ok(Transport::tls(ca, None, None))
+        } else if self.insecure {
+            log::warn!(
+                "MQTT TLS certificate validation is disabled; the connection is vulnerable to man-in-the-middle attacks"
+            );
+            let builder = ClientConfig::builder();
+            let verifier = NoCertificateVerification(builder.crypto_provider().clone());
+            let config = builder
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier))
+                .with_no_client_auth();
+            Ok(Transport::tls_with_config(config.into()))
+        } else {
+            Ok(Transport::tcp())
+        }
+    }
+}
+
+#[derive(Debug)]
+struct NoCertificateVerification(Arc<CryptoProvider>);
+
+impl ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    // Only certificate trust and hostname validation are skipped, not handshake signatures.
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -69,8 +159,10 @@ fn state_topic(base_topic: &String) -> String {
 }
 
 impl MqttConnection {
-    pub fn new(cfg: MqttConfig) -> MqttConnection {
+    pub fn new(cfg: MqttConfig) -> Result<MqttConnection> {
+        let transport = cfg.transport()?;
         let mut mqttoptions = MqttOptions::new(cfg.client_id, cfg.server, cfg.port);
+        mqttoptions.set_transport(transport);
         mqttoptions.set_clean_start(true);
         mqttoptions.set_keep_alive(Duration::from_secs(180));
         mqttoptions.set_last_will(LastWill::new(
@@ -88,11 +180,11 @@ impl MqttConnection {
         let (client, eventloop) = AsyncClient::new(mqttoptions, 1000);
 
         log::info!("MQTT connection created");
-        MqttConnection {
+        Ok(MqttConnection {
             client,
             eventloop,
             base_topic: cfg.base_topic,
-        }
+        })
     }
 
     pub async fn poll(&mut self) -> Result<Option<MqttData>> {
@@ -175,5 +267,75 @@ impl MqttConnection {
                 Ok(None)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rumqttc::TlsConfiguration;
+
+    fn config() -> MqttConfig {
+        MqttConfig {
+            server: "localhost".into(),
+            port: 1883,
+            ca_cert: None,
+            insecure: false,
+            client_id: "test".into(),
+            user: String::new(),
+            password: String::new(),
+            base_topic: "stromer".into(),
+        }
+    }
+
+    #[test]
+    fn default_transport_is_plaintext() {
+        assert!(matches!(
+            config().transport().expect("transport"),
+            Transport::Tcp
+        ));
+    }
+
+    #[test]
+    fn certificate_file_is_passed_to_rumqttc() {
+        // Parsing belongs to rumqttc; any file suffices to test forwarding its bytes.
+        let cfg = MqttConfig {
+            ca_cert: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")),
+            ..config()
+        };
+        let Transport::Tls(TlsConfiguration::Simple { ca, .. }) =
+            cfg.transport().expect("TLS transport")
+        else {
+            panic!("expected certificate-based TLS");
+        };
+        assert_eq!(ca, include_bytes!("../Cargo.toml"));
+    }
+
+    #[test]
+    fn insecure_mode_enables_tls() {
+        let cfg = MqttConfig {
+            insecure: true,
+            ..config()
+        };
+        assert!(matches!(
+            cfg.transport().expect("TLS transport"),
+            Transport::Tls(_)
+        ));
+    }
+
+    #[test]
+    fn certificate_and_insecure_mode_are_mutually_exclusive() {
+        let cfg = MqttConfig {
+            ca_cert: Some("ca.pem".into()),
+            insecure: true,
+            ..config()
+        };
+        assert!(
+            cfg.transport()
+                .err()
+                .expect("conflicting options should fail")
+                .to_string()
+                .contains("mutually exclusive")
+        );
     }
 }

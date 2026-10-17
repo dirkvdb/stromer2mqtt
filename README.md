@@ -26,6 +26,10 @@ Options:
           [env: S2M_MQTT_ADDRESS=]
       --mqtt-port <MQTT_PORT>
           [env: S2M_MQTT_PORT=] [default: 1883]
+      --mqtt-ca-cert <MQTT_CA_CERT>
+          Enable MQTT TLS using a PEM CA certificate file [env: S2M_MQTT_CA_CERT=]
+      --mqtt-insecure
+          Enable MQTT TLS without validating the server certificate (insecure) [env: S2M_MQTT_INSECURE=]
       --mqtt-user <MQTT_USER>
           [env: S2M_MQTT_USER=]
       --mqtt-pass <MQTT_PASSWORD>
@@ -43,6 +47,17 @@ Options:
 ### Authentication
 
 You will need a Stromer API **client ID** (`--stromer-client-id` / `S2M_STROMER_CLIENT_ID`) in addition to your Stromer account username and password. Providing a **client secret** (`--stromer-client-secret` / `S2M_STROMER_CLIENT_SECRET`) enables the v3 API.
+
+### MQTT TLS
+
+MQTT uses plaintext TCP by default. Choose one of these mutually exclusive options to enable TLS:
+
+- **Certificate validation:** `--mqtt-ca-cert /path/to/ca.pem` (or `S2M_MQTT_CA_CERT=/path/to/ca.pem`). Provide PEM CA certificates or the broker's self-signed certificate. The broker certificate must match `--mqtt-addr`. Unreadable files fail at startup; invalid certificates are reported when connecting.
+- **Disable certificate validation:** `--mqtt-insecure` (or `S2M_MQTT_INSECURE=true`). Traffic is encrypted, but the broker's identity is not verified. This is vulnerable to man-in-the-middle attacks; prefer providing a certificate file.
+
+Set `--mqtt-port 8883` (or `S2M_MQTT_PORT=8883`) if your broker uses the standard TLS port. Enabling TLS does not change the default port of `1883`. These options affect only MQTT, not the Stromer HTTPS API.
+
+When using Docker, mount the certificate file read-only and set `S2M_MQTT_CA_CERT` to its path inside the container.
 
 ### Bike detection
 

@@ -35,6 +35,7 @@ pub struct StromerMqttBridge {
 impl StromerMqttBridge {
     pub async fn new(cfg: StromerMqttBridgeConfig) -> Result<StromerMqttBridge> {
         let mqtt_base_topic = format!("{}/", cfg.mqtt_config.base_topic);
+        let mqtt = MqttConnection::new(cfg.mqtt_config)?;
 
         let mut api = StromerApi::new(cfg.username, cfg.password, cfg.client_id, cfg.client_secret);
 
@@ -70,7 +71,7 @@ impl StromerMqttBridge {
         };
 
         Ok(StromerMqttBridge {
-            mqtt: MqttConnection::new(cfg.mqtt_config),
+            mqtt,
             api,
             bike: None,
             bike_id,

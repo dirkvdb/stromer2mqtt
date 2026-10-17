@@ -22,7 +22,7 @@
         pkgs = import nixpkgs {
           inherit system overlays;
         };
-        cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+        cargoToml = fromTOML (builtins.readFile ./Cargo.toml);
       in
       {
 
